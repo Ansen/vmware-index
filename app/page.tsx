@@ -15,6 +15,8 @@ const products: ProductConfig[] = [
   { id: 'fusion-universal', name: 'VMware Fusion Pro for macOS (Universal)', xmlFile: 'fusion-universal.xml' },
   { id: 'fusion-arm64', name: 'VMware Fusion Pro for macOS (ARM64)', xmlFile: 'fusion-arm64.xml' },
   { id: 'fusion-intel', name: 'VMware Fusion Pro for macOS (Intel)', xmlFile: 'fusion.xml' },
+  { id: 'player-linux', name: 'VMware Player for Linux', xmlFile: 'player-linux.xml' },
+  { id: 'player-windows', name: 'VMware Player for Windows', xmlFile: 'player-windows.xml' },
 ];
 
 // Interface for data from /api/getProductVersions (should match server)
@@ -24,6 +26,7 @@ interface SelectableVersion {
   version: string;
   build: string;
   platformOrArch: string;
+  gzFilePath: string; // Added to store the path to the metadata.xml.gz file
   // coreMetadataUrlPath and initialPathFragment are not directly sent to client by this API anymore
 }
 
@@ -113,7 +116,7 @@ export default function Home() {
 
     setIsLoadingDetails(true);
     try {
-      const apiUrl = `/api/download-details?productId=${selectedProductId}&version=${selectedVersionData.version}&build=${selectedVersionData.build}&platformOrArch=${selectedVersionData.platformOrArch}`;
+      const apiUrl = `/api/download-details?productId=${selectedProductId}&version=${selectedVersionData.version}&build=${selectedVersionData.build}&platformOrArch=${selectedVersionData.platformOrArch}&gzFilePath=${encodeURIComponent(selectedVersionData.gzFilePath)}`;
       const response = await fetch(apiUrl);
       
       if (!response.ok) {

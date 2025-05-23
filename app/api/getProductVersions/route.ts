@@ -15,16 +15,20 @@ const products: ProductConfig[] = [
   { id: 'fusion-universal', name: 'VMware Fusion Pro for macOS (Universal)', xmlFile: 'fusion-universal.xml' },
   { id: 'fusion-arm64', name: 'VMware Fusion Pro for macOS (ARM64)', xmlFile: 'fusion-arm64.xml' },
   { id: 'fusion-intel', name: 'VMware Fusion Pro for macOS (Intel)', xmlFile: 'fusion.xml' },
+  { id: 'player-linux', name: 'VMware Player for Linux', xmlFile: 'player-linux.xml' },
+  { id: 'player-windows', name: 'VMware Player for Windows', xmlFile: 'player-windows.xml' },
 ];
 
 // Interface for the data this API route will return to the client
-interface SelectableVersion {
-  idForClientSelection: string; // Unique key for dropdown, e.g., "15.5.0_14665864_windows"
-  displayVersion: string;       // e.g., "15.5.0 (Build 14665864) - Windows"
-  // Data needed for the client to make the next API call to /api/download-details
-  version: string;              // e.g., "15.5.0"
-  build: string;                // e.g., "14665864"
-  platformOrArch: string;       // e.g., "windows", "linux", "universal", "arm64", "x86"
+interface VersionMetaEntry {
+  idForClientSelection: string; // Will be the gzFilePath, unique for dropdown key (Matches client)
+  displayVersion: string;       // Text for the dropdown (Matches client)
+  gzFilePath: string;     // The exact path from <url>, e.g., "ws/15.5.0/14665864/windows/core/metadata.xml.gz"
+  // For sorting and potentially for display or other logic if needed later
+  version: string;
+  build: string;
+  platformOrArch: string;
+  type: string; // 'core', 'packages', or other type inferred from path
 }
 
 const BASE_XML_URL = "https://softwareupdate-prod.broadcom.com/cds/vmw-desktop/";
@@ -52,49 +56,76 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Received empty or malformed main XML data.' }, { status: 500 });
     }
 
-    const versionsMap = new Map<string, SelectableVersion>();
+    const availableEntries: VersionMetaEntry[] = [];
     const metaMatches = mainXmlText.matchAll(/<metadata>([\s\S]*?)<\/metadata>/g);
     
     for (const match of metaMatches) {
       const metadataContent = match[1];
       const urlMatch = metadataContent.match(/<url>([^<]+)<\/url>/);
       if (urlMatch && urlMatch[1]) {
-        const urlPath = urlMatch[1].trim(); // e.g., ws/17.6.3/24583834/windows/core/metadata.xml.gz
-                                           // or fusion/13.0.2/21581413/universal/core/metadata.xml.gz
-        const parts = urlPath.split('/');
-        // Expecting structure: productCode/version/build/platformOrArch/type/...
-        // For Fusion, 'type' can be 'core'. For Workstation, 'type' can be 'core' or 'packages'.
-        if (parts.length >= 4) {
+        const gzFilePath = urlMatch[1].trim();
+        
+        if (gzFilePath.includes('info-only')) {
+          continue;
+        }
+
+        const parts = gzFilePath.split('/');
+        // Example: productCode/version/build/platformOrArch/type/metadata.xml.gz
+        // parts indices:    0    /   1   /  2  /      3       /  4  /       5
+        if (parts.length >= 6) {
             const version = parts[1];
             const build = parts[2];
-            const platformOrArch = parts[3]; // This is the 4th segment.
+            const platformOrArch = parts[3];
+            const type = parts[parts.length - 2]; // The segment before "metadata.xml.gz"
             
-            const uniqueKey = `${version}_${build}_${platformOrArch}`;
-            if (!versionsMap.has(uniqueKey)) {
-                let displayPlatform = platformOrArch.charAt(0).toUpperCase() + platformOrArch.slice(1);
-                if (platformOrArch === "ws-windows") displayPlatform = "Windows"; // Example specific override if needed
-                if (platformOrArch === "ws-linux") displayPlatform = "Linux";
+            const displayPlatform = platformOrArch.charAt(0).toUpperCase() + platformOrArch.slice(1);
+            const displayType = type.charAt(0).toUpperCase() + type.slice(1);
 
-                versionsMap.set(uniqueKey, {
-                  idForClientSelection: uniqueKey,
-                  displayVersion: `${version} (Build ${build}) - ${displayPlatform}`,
-                  version: version,
-                  build: build,
-                  platformOrArch: platformOrArch,
-                });
-            }
+            availableEntries.push({
+              idForClientSelection: gzFilePath, // Use the full path as the unique ID
+              displayVersion: `${version} (Build ${build}) - ${displayPlatform} - ${displayType}`,
+              gzFilePath: gzFilePath,
+              version: version,
+              build: build,
+              platformOrArch: platformOrArch,
+              type: type,
+            });
+        } else if (parts.length === 5 && productId.startsWith('fusion-')) {
+            // Handling cases like "fusion/11.1.0/13668589/core/metadata.xml.gz" where platformOrArch might be 'core'
+            // For fusion, <url>fusion/11.1.0/13668589/core/metadata.xml.gz</url>
+            // parts[0]=fusion, parts[1]=11.1.0, parts[2]=13668589, parts[3]=core, parts[4]=metadata.xml.gz
+            const version = parts[1];
+            const build = parts[2];
+            const platformOrArch = parts[3]; // This is 'core' in the example, but should be an arch like 'universal' or 'arm64'
+                                          // The actual platform/arch is part of productConfig.id for fusion like 'fusion-arm64'
+            const type = parts[parts.length - 2]; // This is likely 'core'
+
+            // For fusion, the platform/arch is better derived from productId
+            let fusionArch = "UnknownArch";
+            if (productId === 'fusion-universal') fusionArch = "Universal";
+            else if (productId === 'fusion-arm64') fusionArch = "ARM64";
+            else if (productId === 'fusion-intel') fusionArch = "Intel";
+            else if (productId === 'fusion') fusionArch = "Intel"; // Default fusion.xml is often Intel
+
+            availableEntries.push({
+                idForClientSelection: gzFilePath,
+                displayVersion: `${version} (Build ${build}) - macOS ${fusionArch} - ${type.charAt(0).toUpperCase() + type.slice(1)}`,
+                gzFilePath: gzFilePath,
+                version: version,
+                build: build,
+                platformOrArch: fusionArch, // Use derived arch
+                type: type,
+            });
         }
       }
     }
 
-    const uniqueVersionsArray = Array.from(versionsMap.values());
-
-    if (uniqueVersionsArray.length === 0) {
-      return NextResponse.json({ error: `No versions found for ${productConfig.name} in ${productConfig.xmlFile}.`, versions: [] }, { status: 200 });
+    if (availableEntries.length === 0) {
+      return NextResponse.json({ error: `No valid (non 'info-only') metadata entries found for ${productConfig.name} in ${productConfig.xmlFile}.`, entries: [] }, { status: 200 });
     }
 
-    // Sort versions: newest first by version, then by build
-    uniqueVersionsArray.sort((a, b) => {
+    // Sort entries: newest first by version, then by build, then by type (core first)
+    availableEntries.sort((a, b) => {
       const aVerParts = a.version.split('.').map(Number);
       const bVerParts = b.version.split('.').map(Number);
       for (let i = 0; i < Math.max(aVerParts.length, bVerParts.length); i++) {
@@ -102,10 +133,15 @@ export async function GET(request: NextRequest) {
         const bPart = bVerParts[i] || 0;
         if (aPart !== bPart) return bPart - aPart;
       }
-      return parseInt(b.build, 10) - parseInt(a.build, 10);
+      const buildDiff = parseInt(b.build, 10) - parseInt(a.build, 10);
+      if (buildDiff !== 0) return buildDiff;
+      // Sort 'core' before 'packages' or others
+      if (a.type === 'core' && b.type !== 'core') return -1;
+      if (a.type !== 'core' && b.type === 'core') return 1;
+      return a.type.localeCompare(b.type);
     });
 
-    return NextResponse.json(uniqueVersionsArray);
+    return NextResponse.json(availableEntries);
 
   } catch (e: any) {
     console.error(`Error processing request for ${productId} in /api/getProductVersions:`, e);

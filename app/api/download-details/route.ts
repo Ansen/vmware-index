@@ -70,93 +70,57 @@ function extractDownloadableItemsFromInnerXml(innerXmlText: string, pathFragment
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const productId = searchParams.get('productId');
-  const version = searchParams.get('version');
-  const build = searchParams.get('build');
-  const platformOrArch = searchParams.get('platformOrArch'); // e.g., "windows", "linux", "universal", "arm64"
+  const gzFilePath = searchParams.get('gzFilePath');
 
-  if (!productId || !version || !build || !platformOrArch) {
-    return NextResponse.json({ error: 'productId, version, build, and platformOrArch are required' }, { status: 400 });
+  if (!gzFilePath) {
+    return NextResponse.json({ error: 'gzFilePath is required' }, { status: 400 });
   }
 
-  const gzUrlPathsToFetch: { type: string, url: string, pathFragment: string }[] = [];
-  const productShortName = productId.startsWith('ws-') ? 'ws' : 'fusion';
-
-  if (productId.startsWith('ws-')) { // Workstation products
-    gzUrlPathsToFetch.push({
-        type: 'core',
-        url: `${productShortName}/${version}/${build}/${platformOrArch}/core/metadata.xml.gz`,
-        pathFragment: `${productShortName}/${version}/${build}/${platformOrArch}/core/`
-    });
-    gzUrlPathsToFetch.push({
-        type: 'packages',
-        url: `${productShortName}/${version}/${build}/${platformOrArch}/packages/metadata.xml.gz`,
-        pathFragment: `${productShortName}/${version}/${build}/${platformOrArch}/packages/`
-    });
-  } else if (productId.startsWith('fusion-')) { // Fusion products
-    gzUrlPathsToFetch.push({
-        type: 'core', // Fusion typically has 'core' type
-        url: `${productShortName}/${version}/${build}/${platformOrArch}/core/metadata.xml.gz`,
-        pathFragment: `${productShortName}/${version}/${build}/${platformOrArch}/core/`
-    });
-  } else {
-    return NextResponse.json({ error: 'Unknown product type for constructing .gz URLs' }, { status: 400 });
+  // Derive pathFragment from gzFilePath (e.g., "fusion/11.1.0/13668589/core/")
+  const pathParts = gzFilePath.split('/');
+  if (pathParts.length < 2) {
+    return NextResponse.json({ error: 'Invalid gzFilePath format' }, { status: 400 });
   }
-  
-  const allDownloadableItems: DownloadableItemDetail[] = [];
+  const pathFragmentToGz = pathParts.slice(0, -1).join('/') + '/';
 
-  for (const { type, url: gzUrlPath, pathFragment } of gzUrlPathsToFetch) {
-    try {
-      const gzResponse = await fetch(`${BASE_XML_URL}${gzUrlPath}`, { cache: 'no-store' });
+  try {
+    const gzResponse = await fetch(`${BASE_XML_URL}${gzFilePath}`, { cache: 'no-store' });
 
-      if (!gzResponse.ok) {
-        // For packages, it's often a 404, which is acceptable if core exists.
-        if (type === 'packages' && gzResponse.status === 404) {
-            console.log(`No 'packages' metadata found for ${productId} version ${version} (at ${gzUrlPath}), skipping.`);
-            continue;
-        }
-        console.warn(`Failed to fetch ${type} GZ for ${gzUrlPath}: ${gzResponse.status}`);
-        // Don't immediately fail the whole request if one part (like packages) fails,
-        // but log it. If core fails, it's more critical.
-        if (type === 'core') {
-             // Propagate core fetch error
-             return NextResponse.json({ error: `Failed to fetch core GZ (${gzResponse.status}) from ${gzUrlPath}` }, { status: gzResponse.status });
-        }
-        continue;
-      }
-      
-      const gzipBuffer = await gzResponse.arrayBuffer();
-      if (!gzipBuffer || gzipBuffer.byteLength === 0) {
-        console.warn(`Received empty GZ buffer for ${gzUrlPath}`);
-        continue;
-      }
-
-      let innerXmlText: string;
-      try {
-        const decompressedBuffer = await gunzip(Buffer.from(gzipBuffer));
-        innerXmlText = decompressedBuffer.toString('utf-8');
-      } catch (unzipError: any) {
-        console.warn(`Failed to decompress Gzip for ${gzUrlPath}: ${unzipError.message}`);
-        continue;
-      }
-      
-      if (!innerXmlText || !innerXmlText.trim().startsWith('<')) {
-        console.warn(`Decompressed data is not valid XML for ${gzUrlPath}.`);
-        continue;
-      }
-
-      const itemsFromThisXml = extractDownloadableItemsFromInnerXml(innerXmlText, pathFragment);
-      allDownloadableItems.push(...itemsFromThisXml);
-
-    } catch (e: any) {
-      console.error(`Error processing ${type} GZ for ${gzUrlPath}:`, e);
-      // Continue to next .gz file if one fails, unless it's a critical failure
+    if (!gzResponse.ok) {
+      console.error(`Failed to fetch GZ file for ${gzFilePath}: ${gzResponse.status}`);
+      return NextResponse.json({ error: `Failed to fetch GZ file (${gzResponse.status}) from ${gzFilePath}` }, { status: gzResponse.status });
     }
-  }
+    
+    const gzipBuffer = await gzResponse.arrayBuffer();
+    if (!gzipBuffer || gzipBuffer.byteLength === 0) {
+      console.error(`Received empty GZ buffer for ${gzFilePath}`);
+      return NextResponse.json({ error: 'Received empty GZ buffer.' }, { status: 500 });
+    }
 
-  if (allDownloadableItems.length === 0) {
-    return NextResponse.json({ error: `No downloadable items found for ${productId} version ${version} build ${build} platform ${platformOrArch}.` , items: [] }, { status: 200 });
+    let innerXmlText: string;
+    try {
+      const decompressedBuffer = await gunzip(Buffer.from(gzipBuffer));
+      innerXmlText = decompressedBuffer.toString('utf-8');
+    } catch (unzipError: any) {
+      console.error(`Failed to decompress Gzip for ${gzFilePath}: ${unzipError.message}`);
+      return NextResponse.json({ error: `Failed to decompress Gzip data: ${unzipError.message}` }, { status: 500 });
+    }
+    
+    if (!innerXmlText || !innerXmlText.trim().startsWith('<')) {
+      console.warn(`Decompressed data is not valid XML for ${gzFilePath}.`);
+      return NextResponse.json({ error: 'Decompressed data is not valid XML.' }, { status: 500 });
+    }
+
+    const downloadableItems = extractDownloadableItemsFromInnerXml(innerXmlText, pathFragmentToGz);
+
+    if (downloadableItems.length === 0) {
+      return NextResponse.json({ error: `No downloadable items found in ${gzFilePath}.`, items: [] }, { status: 200 });
+    }
+    
+    return NextResponse.json(downloadableItems);
+
+  } catch (e: any) {
+    console.error(`Error processing request for ${gzFilePath} in /api/download-details:`, e);
+    return NextResponse.json({ error: `Server error processing download details: ${e.message}` }, { status: 500 });
   }
-  
-  return NextResponse.json(allDownloadableItems);
 }
