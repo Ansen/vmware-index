@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const mainXmlResponse = await fetch(`${BASE_XML_URL}${productConfig.xmlFile}`, { cache: 'no-store' });
+    const mainXmlResponse = await fetch(`${BASE_XML_URL}${productConfig.xmlFile}`, { next: { revalidate: 3600 } });
     if (!mainXmlResponse.ok) {
       return NextResponse.json({ error: `Failed to fetch main XML (${mainXmlResponse.status})` }, { status: mainXmlResponse.status });
     }

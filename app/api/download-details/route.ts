@@ -139,7 +139,7 @@ export async function GET(request: NextRequest) {
   const pathFragmentToGz = pathParts.slice(0, -1).join('/') + '/';
 
   try {
-    const gzResponse = await fetch(`${BASE_XML_URL}${gzFilePath}`, { cache: 'no-store' });
+    const gzResponse = await fetch(`${BASE_XML_URL}${gzFilePath}`, { next: { revalidate: 3600 } });
 
     if (!gzResponse.ok) {
       console.error(`Failed to fetch GZ file for ${gzFilePath}: ${gzResponse.status}`);
