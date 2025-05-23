@@ -1,68 +1,123 @@
 import { NextRequest, NextResponse } from 'next/server';
 import zlib from 'zlib';
 import { promisify } from 'util';
+import { parseStringPromise } from 'xml2js';
 
 const gunzip = promisify(zlib.gunzip);
 
 const BASE_XML_URL = "https://softwareupdate-prod.broadcom.com/cds/vmw-desktop/";
 
-// Helper function to extract content using regex (simplified XML parsing)
-// These functions are duplicated from getProductVersions/route.ts
-// In a real application, these would be in a shared utility file.
-function extractXmlTagContent(xml: string, tagName: string): string | null {
-  const match = xml.match(new RegExp(`<${tagName}[^>]*>([^<]+)<\/${tagName}>`));
-  return match && match[1] ? match[1].trim() : null;
+// Interface for the parsed XML structure (simplified)
+// Note: xml2js typically creates arrays for elements, even if there's only one.
+// The [0] is used to access the first (and often only) element.
+// Text content is often in '_' property. Attributes are in '$'.
+
+interface XmlComponent {
+  // relativePath can be a string or an object with '_' for text and '$' for attributes
+  relativePath: (string | { _: string; $: { [key: string]: string } })[];
+  payload?: string[];
+  componentID?: string[];
+  checksum?: [{
+    checksumType: string[];
+    checksum: string[];
+  }];
 }
 
-// function extractProductVersionFromCoreXml(coreXml: string): string | null {
-//     // Path: <bulletin><productList><product><version>
-//     const bulletinMatch = coreXml.match(/<bulletin>([\s\S]*?)<\/bulletin>/);
-//     if (bulletinMatch && bulletinMatch[1]) {
-//         const productListMatch = bulletinMatch[1].match(/<productList>([\s\S]*?)<\/productList>/);
-//         if (productListMatch && productListMatch[1]) {
-//             const productMatch = productListMatch[1].match(/<product>([\s\S]*?)<\/product>/);
-//             if (productMatch && productMatch[1]) {
-//                 return extractXmlTagContent(productMatch[1], "version");
-//             }
-//         }
-//     }
-//     return null;
-// }
+interface XmlComponentList {
+  component: XmlComponent[];
+}
+
+interface XmlBulletin {
+  componentList: XmlComponentList[];
+}
+
+interface XmlRoot {
+  metadataResponse: { // Changed from 'metadata'
+    bulletin: XmlBulletin[];
+    //Potentially other top-level elements like version, timeStamp etc. can be added here if needed
+  };
+}
+
 
 // Updated to extract all components from a core/packages XML
 interface DownloadableItemDetail {
   name: string;
   pathFragment: string;
   finalFileName: string;
+  checksumType?: string; // Stores the type of checksum (e.g., "sha256")
+  checksumValue?: string; // Stores the actual checksum value
 }
 
 // Parses a core-metadata.xml or packages-metadata.xml text and returns all downloadable components
-function extractDownloadableItemsFromInnerXml(innerXmlText: string, pathFragmentToGz: string): DownloadableItemDetail[] {
+async function extractDownloadableItemsFromInnerXml(innerXmlText: string, pathFragmentToGz: string): Promise<DownloadableItemDetail[]> {
     const items: DownloadableItemDetail[] = [];
-    const bulletinMatches = innerXmlText.matchAll(/<bulletin>([\s\S]*?)<\/bulletin>/g);
+    try {
+        // The root element in core-metadata.xml is <metadataResponse>
+        const parsedXml: XmlRoot = await parseStringPromise(innerXmlText, {
+            explicitArray: true, // Ensures elements are always arrays
+            trim: true,          // Trims whitespace from text nodes
+            charkey: '_',        // Character content key
+            attrkey: '$',        // Attribute key
+            tagNameProcessors: [(name) => name], // Keep tag names as is
+            valueProcessors: [(value) => value], // Keep values as is
+        });
 
-    for (const bulletinMatch of bulletinMatches) {
-        const bulletinContent = bulletinMatch[1];
-        const componentListMatches = bulletinContent.matchAll(/<componentList>([\s\S]*?)<\/componentList>/g);
-        for (const componentListMatch of componentListMatches) {
-            const componentListContent = componentListMatch[1];
-            const componentMatches = componentListContent.matchAll(/<component>([\s\S]*?)<\/component>/g);
-            for (const componentMatch of componentMatches) {
-                const componentContent = componentMatch[1];
-                const relativePath = extractXmlTagContent(componentContent, "relativePath");
-                let name = extractXmlTagContent(componentContent, "payload"); // Prefer <payload> for name
-                if (!name) name = extractXmlTagContent(componentContent, "componentID"); // Fallback to componentID
-                if (!name) name = relativePath; // Fallback to relativePath if others are missing
+        // Check if the root 'metadataResponse' and 'bulletin' elements exist
+        if (!parsedXml.metadataResponse || !parsedXml.metadataResponse.bulletin) {
+            console.warn("Parsed XML does not contain metadataResponse.bulletin");
+            return items;
+        }
 
-                if (relativePath && name) {
-                    items.push({
-                        name: name,
-                        pathFragment: pathFragmentToGz, // The path to the directory of the .gz file
-                        finalFileName: relativePath
-                    });
+        for (const bulletin of parsedXml.metadataResponse.bulletin) {
+            if (!bulletin.componentList) continue;
+
+            for (const componentList of bulletin.componentList) {
+                if (!componentList.component) continue;
+
+                for (const component of componentList.component) {
+                    let finalFileName: string | undefined = undefined;
+                    if (component.relativePath && component.relativePath[0]) {
+                        const rp = component.relativePath[0];
+                        if (typeof rp === 'string') {
+                            finalFileName = rp;
+                        } else if (rp && typeof rp._ === 'string') {
+                            finalFileName = rp._;
+                        }
+                    }
+
+                    let name = component.payload && component.payload[0];
+                    if (!name) name = component.componentID && component.componentID[0];
+                    if (!name && finalFileName) name = finalFileName; // Fallback to finalFileName
+
+                    let extractedChecksumType: string | undefined = undefined;
+                    let extractedChecksumValue: string | undefined = undefined;
+
+                    if (component.checksum && component.checksum[0]) {
+                        const checksumData = component.checksum[0];
+                        extractedChecksumType = checksumData.checksumType && checksumData.checksumType[0];
+                        extractedChecksumValue = checksumData.checksum && checksumData.checksum[0];
+                    }
+
+                    if (finalFileName && name) {
+                        const item: DownloadableItemDetail = {
+                            name: name,
+                            pathFragment: pathFragmentToGz,
+                            finalFileName: finalFileName
+                        };
+                        if (extractedChecksumType) {
+                            item.checksumType = extractedChecksumType;
+                        }
+                        if (extractedChecksumValue) {
+                            item.checksumValue = extractedChecksumValue;
+                        }
+                        items.push(item);
+                    }
                 }
             }
         }
+    } catch (error) {
+        console.error("Error parsing XML with xml2js:", error);
+        // Potentially re-throw or handle more gracefully depending on application needs
     }
     return items;
 }
@@ -111,7 +166,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Decompressed data is not valid XML.' }, { status: 500 });
     }
 
-    const downloadableItems = extractDownloadableItemsFromInnerXml(innerXmlText, pathFragmentToGz);
+    const downloadableItems = await extractDownloadableItemsFromInnerXml(innerXmlText, pathFragmentToGz);
 
     if (downloadableItems.length === 0) {
       return NextResponse.json({ error: `No downloadable items found in ${gzFilePath}.`, items: [] }, { status: 200 });

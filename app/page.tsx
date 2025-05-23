@@ -35,6 +35,8 @@ interface DownloadableItem {
   name: string;
   pathFragment: string;
   finalFileName: string;
+  checksumType?: string; // Changed from hash to checksumType
+  checksumValue?: string; // Added checksumValue
 }
 
 // const BASE_XML_URL = "https://softwareupdate-prod.broadcom.com/cds/vmw-desktop/"; // Not needed
@@ -226,6 +228,11 @@ export default function Home() {
               return (
                 <li key={index} className="p-3 bg-white rounded-md shadow border border-gray-200">
                   <p className="font-medium text-gray-700 break-all">{item.name}</p>
+                  {item.checksumType && item.checksumValue && (
+                    <p className="text-xs text-gray-500 break-all mt-0.5">
+                      {item.checksumType}: {item.checksumValue}
+                    </p>
+                  )}
                   <a
                     href={fullLink}
                     target="_blank"
