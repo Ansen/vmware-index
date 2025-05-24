@@ -50,6 +50,7 @@ export default function Home() {
   const [isLoadingVersions, setIsLoadingVersions] = useState<boolean>(false);
   const [isLoadingDetails, setIsLoadingDetails] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
+  const [copiedLinkIndex, setCopiedLinkIndex] = useState<number | null>(null);
 
   // Effect to fetch version list when product changes
   useEffect(() => {
@@ -242,11 +243,25 @@ export default function Home() {
                     {fullLink}
                   </a>
                   <button
-                    onClick={() => navigator.clipboard.writeText(fullLink)}
-                    className="mt-1 bg-gray-200 hover:bg-gray-300 text-gray-700 text-xs font-medium py-1 px-2.5 rounded-md shadow"
-                    title="Copy Link"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(fullLink);
+                        setCopiedLinkIndex(index);
+                        setTimeout(() => setCopiedLinkIndex(null), 2000); // Reset after 2 seconds
+                      } catch (err) {
+                        console.error("Failed to copy link: ", err);
+                        // Optionally, inform the user about the copy failure, though it's often due to browser restrictions/permissions.
+                      }
+                    }}
+                    className={`mt-1 text-xs font-medium py-1 px-2.5 rounded-md shadow transition-colors duration-150 ease-in-out ${
+                      copiedLinkIndex === index
+                        ? "bg-green-500 hover:bg-green-600 text-white"
+                        : "bg-gray-200 hover:bg-gray-300 text-gray-700"
+                    }`}
+                    title={copiedLinkIndex === index ? "Copied!" : "Copy Link"}
+                    disabled={copiedLinkIndex === index}
                   >
-                    Copy Link
+                    {copiedLinkIndex === index ? "Copied!" : "Copy Link"}
                   </button>
                 </li>
               );
