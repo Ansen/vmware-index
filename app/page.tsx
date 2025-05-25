@@ -17,6 +17,9 @@ const products: ProductConfig[] = [
   { id: 'fusion-intel', name: 'VMware Fusion Pro for macOS (Intel)', xmlFile: 'fusion.xml' },
   { id: 'player-linux', name: 'VMware Player for Linux', xmlFile: 'player-linux.xml' },
   { id: 'player-windows', name: 'VMware Player for Windows', xmlFile: 'player-windows.xml' },
+  { id: 'vmrc-linux', name: 'VMware Remote Console for Linux', xmlFile: 'vmrc-linux.xml' },
+  { id: 'vmrc-macos', name: 'VMware Remote Console for macOS', xmlFile: 'vmrc-macos.xml' },
+  { id: 'vmrc-windows', name: 'VMware Remote Console for Windows', xmlFile: 'vmrc-windows.xml' },
 ];
 
 // Interface for data from /api/getProductVersions (should match server)

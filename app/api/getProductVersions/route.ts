@@ -17,6 +17,9 @@ const products: ProductConfig[] = [
   { id: 'fusion-intel', name: 'VMware Fusion Pro for macOS (Intel)', xmlFile: 'fusion.xml' },
   { id: 'player-linux', name: 'VMware Player for Linux', xmlFile: 'player-linux.xml' },
   { id: 'player-windows', name: 'VMware Player for Windows', xmlFile: 'player-windows.xml' },
+  { id: 'vmrc-linux', name: 'VMware Remote Console for Linux', xmlFile: 'vmrc-linux.xml' },
+  { id: 'vmrc-macos', name: 'VMware Remote Console for macOS', xmlFile: 'vmrc-macos.xml' },
+  { id: 'vmrc-windows', name: 'VMware Remote Console for Windows', xmlFile: 'vmrc-windows.xml' },
 ];
 
 // Interface for the data this API route will return to the client
@@ -114,6 +117,33 @@ export async function GET(request: NextRequest) {
                 version: version,
                 build: build,
                 platformOrArch: fusionArch, // Use derived arch
+                type: type,
+            });
+} else if (parts.length === 5 && productId.startsWith('vmrc-')) {
+            // Handle VMRC: vmrc/{version}/{build}/{platform}/metadata.xml.gz
+            // Example URL: vmrc/12.0.4/21740317/windows/metadata.xml.gz
+            // parts[0]=vmrc (product code from URL, matches start of productId)
+            // parts[1]=version (e.g., "12.0.4" - this is the VMRC application version)
+            // parts[2]=build (e.g., "21740317")
+            // parts[3]=platform (e.g., 'windows', 'linux', 'macos')
+            // parts[4]=metadata.xml.gz (filename)
+
+            const versionFromUrl = parts[1]; // Actual VMRC app version from URL
+            const buildFromUrl = parts[2];   // Actual VMRC build from URL
+            const platformFromUrl = parts[3];
+            const type = "App"; // VMRC is a standalone application
+
+            const displayPlatform = platformFromUrl.charAt(0).toUpperCase() + platformFromUrl.slice(1);
+
+            // The <version> tag in the main VMRC XML (e.g., "7.0.0") seems to be a product series designator.
+            // We use the version from the URL for display and sorting.
+            availableEntries.push({
+                idForClientSelection: gzFilePath,
+                displayVersion: `VMRC ${versionFromUrl} (Build ${buildFromUrl}) - ${displayPlatform}`,
+                gzFilePath: gzFilePath,
+                version: versionFromUrl, // Use version from URL
+                build: buildFromUrl,     // Use build from URL
+                platformOrArch: platformFromUrl,
                 type: type,
             });
         }
